@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "=========================================================="
-echo "   真正工业级 REALITY 自用部署脚本 (大牛深度审计版)   "
+echo "   真正工业级 REALITY 自用部署脚本 (全绝对路径终极版)   "
 echo "=========================================================="
 
 export DEBIAN_FRONTEND=noninteractive
@@ -15,20 +15,23 @@ if [ -z "$PUBLIC_IP" ]; then
   exit 1
 fi
 
-# 2. 自动拉取官方 Xray 核心
-if ! command -v xray >/dev/null 2>&1; then
-  echo "[*] 正在拉取官方 Xray 核心..."
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+# 2. 强制拉取官方 Xray 核心 (不管之前有没有，强制覆盖安装，确保路径统一)
+echo "[*] 正在拉取官方 Xray 核心..."
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+# 3. 【彻底死锁路径】直接定义官方标准绝对路径，不再让系统乱找
+XRAY_BIN="/usr/local/bin/xray"
+if [ ! -f "$XRAY_BIN" ]; then
+  # 兜底检查另一个可能的位置
+  if [ -f "/usr/bin/xray" ]; then
+    XRAY_BIN="/usr/bin/xray"
+  else
+    echo "[ERROR] Xray 核心安装失败，未找到可执行文件"
+    exit 1
+  fi
 fi
 
-# 3. 动态寻找 Xray 真实可执行路径 (修复路径死写漏洞)
-XRAY_BIN=$(command -v xray)
-if [ -z "$XRAY_BIN" ]; then
-  echo "[ERROR] 未找到 xray 可执行文件"
-  exit 1
-fi
-
-# 4. 交互式获取域名 (仅用于 Cloudflare 节点命名和本地记录)
+# 4. 交互式获取域名
 if [ -t 0 ]; then
   read -r -p "请输入您在 Cloudflare 解析的域名 (如 vps1.1564151.xyz): " DOMAIN || true
 else
@@ -41,11 +44,12 @@ if [ -z "${DOMAIN:-}" ]; then
   exit 1
 fi
 
-# 5. 安全提取密钥对 (使用动态路径，确保绝对不为空)
+# 5. 安全提取密钥对 (使用完全死锁的绝对路径)
 UUID="$(uuidgen)"
 PORT="443"
 SID="$(openssl rand -hex 8)"
 
+# 用绝对路径生成密钥
 $XRAY_BIN x25519 > /tmp/xray_keys.txt
 PRIVATE_KEY=$(awk '/Private key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
 PUBLIC_KEY=$(awk '/Public key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
@@ -56,7 +60,7 @@ if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
   exit 1
 fi
 
-# 6. 写入极致纯净的 Xray 配置文件 (剔除私人域名，100% 纯净伪装微软)
+# 6. 写入极致纯净的 Xray 配置文件 (纯净伪装微软)
 mkdir -p /usr/local/etc/xray
 cat > /usr/local/etc/xray/config.json <<EOF
 {
@@ -104,7 +108,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
 }
 EOF
 
-# 7. 配置 Systemd 系统服务守护 (使用动态 Xray 路径)
+# 7. 配置 Systemd 系统服务守护
 cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Production Service
@@ -128,9 +132,9 @@ systemctl daemon-reload
 systemctl enable xray
 systemctl restart xray
 
-# 8. 配置 5 分钟进程探活自愈看门狗 (删除定时重启，拒绝机场特征)
+# 8. 配置 5 分钟进程探活自愈看门狗
 mkdir -p /usr/local/bin
-cat > /usr/local/bin/xray-check.sh <<'EOF'
+cat > /usr/local/bin/xray-check.sh <<EOF
 #!/usr/bin/env bash
 if ! pgrep xray >/dev/null; then
   systemctl daemon-reload
