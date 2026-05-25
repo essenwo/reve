@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== 工业级 REALITY 多节点通用部署脚本 ==="
+echo "=========================================================="
+echo "      工业级 REALITY 多节点通用部署脚本 (终极稳固版)      "
+echo "=========================================================="
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y && apt-get install -y curl jq openssl uuid-runtime cron
+apt-get update -y && apt-get install -y curl jq openssl uuid-runtime cron net-tools
 
+# 1. 自动获取准确的公网 IPv4
 PUBLIC_IP=$(curl -4 -s --connect-timeout 5 https://api.ip.sb/ip || curl -4 -s --connect-timeout 5 https://ifconfig.me || echo "")
 if [ -z "$PUBLIC_IP" ]; then
   echo "[ERROR] 无法获取外部公网 IP，请检查 VPS 网络环境。"
   exit 1
 fi
 
+# 2. 自动拉取官方 Xray 核心
 if ! command -v xray >/dev/null 2>&1; then
   echo "[*] 正在拉取官方 Xray 核心..."
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 fi
 
+# 3. 交互式获取域名
 if [ -t 0 ]; then
-  read -r -p "请输入您的二级域名 (如 vps1.1564151.xyz): " DOMAIN || true
+  read -r -p "请输入您在 Cloudflare 解析的域名 (如 vps1.1564151.xyz 或 1564151.xyz): " DOMAIN || true
 else
   echo "[ERROR] 必须在交互式终端运行以输入域名"
   exit 1
@@ -29,17 +34,24 @@ if [ -z "${DOMAIN:-}" ]; then
   exit 1
 fi
 
+# 4. 【彻底焊死修复点】用高阶手法完美生成并纯化密钥，绝不留空
 UUID="$(uuidgen)"
 PORT="443"
-
-# 【核心修复点】强行同步等待，确保私钥和公钥 100% 捕获成功，绝不留空
-XRAY_KEYS=$(/usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$XRAY_KEYS" | awk '/Private key:/ {print $3}' | tr -d '\r\n')
-PUBLIC_KEY=$(echo "$XRAY_KEYS" | awk '/Public key:/ {print $3}' | tr -d '\r\n')
 SID="$(openssl rand -hex 8)"
 
-mkdir -p /usr/local/etc/xray
+# 强行落盘临时文件提取，彻底解决由于系统组件引发的字符截断和空值闪退
+/usr/local/bin/xray x25519 > /tmp/xray_keys.txt
+PRIVATE_KEY=$(awk '/Private key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
+PUBLIC_KEY=$(awk '/Public key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
+rm -f /tmp/xray_keys.txt
 
+if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
+  echo "[ERROR] 密钥对生成异常，脚本自动终止。"
+  exit 1
+fi
+
+# 5. 写入纯净无瑕疵的 Xray 配置文件
+mkdir -p /usr/local/etc/xray
 cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": {
@@ -87,6 +99,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
 }
 EOF
 
+# 6. 配置并拉起 Systemd 系统服务守护
 cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Production Service
@@ -110,6 +123,7 @@ systemctl daemon-reload
 systemctl enable xray
 systemctl restart xray
 
+# 7. 配置 5 分钟进程探活自愈看门狗
 mkdir -p /usr/local/bin
 cat > /usr/local/bin/xray-check.sh <<'EOF'
 #!/usr/bin/env bash
@@ -128,18 +142,19 @@ echo "0 4 * * 1 /sbin/reboot" >> "$TMP_CRON"
 crontab "$TMP_CRON"
 rm -f "$TMP_CRON"
 
-URI="vless://${UUID}@${PUBLIC_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp&sid=${SID}#Reality_VPS_Node"
+# 8. 拼装客户端输出
+URI="vless://${UUID}@${PUBLIC_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp&sid=${SID}#Reality_Node_${PUBLIC_IP}"
 
 echo
 echo "==================== 工业级多节点通用版部署成功 ===================="
 echo "公网IP: $PUBLIC_IP"
-echo "绑定的二级域名: $DOMAIN"
+echo "绑定的域名: $DOMAIN"
 echo "------------------------------------------------------------------"
-echo "【Shadowrocket 小火箭专用链接】:"
+echo "【📱 Shadowrocket 小火箭专用单行链接】(直接整行复制导入):"
 echo "$URI"
 echo "------------------------------------------------------------------"
-echo "【Clash Verge 专用配置格式（用于粘贴进 YAML 节点列表）】:"
-echo "  - name: \"Reality_VPS_Node\""
+echo "【💻 Clash Verge 专用配置格式】(复制粘贴进 YAML 的 proxies 列表下):"
+echo "  - name: \"Reality_Node_${PUBLIC_IP}\""
 echo "    type: vless"
 echo "    server: $PUBLIC_IP"
 echo "    port: 443"
