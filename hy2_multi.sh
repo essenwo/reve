@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "=========================================================="
-echo "      工业级 REALITY 多节点通用部署脚本 (终极稳固版)      "
+echo "   真正工业级 REALITY 自用部署脚本 (大牛深度审计版)   "
 echo "=========================================================="
 
 export DEBIAN_FRONTEND=noninteractive
@@ -21,11 +21,18 @@ if ! command -v xray >/dev/null 2>&1; then
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 fi
 
-# 3. 交互式获取域名
+# 3. 动态寻找 Xray 真实可执行路径 (修复路径死写漏洞)
+XRAY_BIN=$(command -v xray)
+if [ -z "$XRAY_BIN" ]; then
+  echo "[ERROR] 未找到 xray 可执行文件"
+  exit 1
+fi
+
+# 4. 交互式获取域名 (仅用于 Cloudflare 节点命名和本地记录)
 if [ -t 0 ]; then
-  read -r -p "请输入您在 Cloudflare 解析的域名 (如 vps1.1564151.xyz 或 1564151.xyz): " DOMAIN || true
+  read -r -p "请输入您在 Cloudflare 解析的域名 (如 vps1.1564151.xyz): " DOMAIN || true
 else
-  echo "[ERROR] 必须在交互式终端运行以输入域名"
+  echo "[ERROR] 必须在交互式终端运行"
   exit 1
 fi
 
@@ -34,13 +41,12 @@ if [ -z "${DOMAIN:-}" ]; then
   exit 1
 fi
 
-# 4. 【彻底焊死修复点】用高阶手法完美生成并纯化密钥，绝不留空
+# 5. 安全提取密钥对 (使用动态路径，确保绝对不为空)
 UUID="$(uuidgen)"
 PORT="443"
 SID="$(openssl rand -hex 8)"
 
-# 强行落盘临时文件提取，彻底解决由于系统组件引发的字符截断和空值闪退
-/usr/local/bin/xray x25519 > /tmp/xray_keys.txt
+$XRAY_BIN x25519 > /tmp/xray_keys.txt
 PRIVATE_KEY=$(awk '/Private key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
 PUBLIC_KEY=$(awk '/Public key:/ {print $3}' /tmp/xray_keys.txt | tr -d '[:space:]')
 rm -f /tmp/xray_keys.txt
@@ -50,7 +56,7 @@ if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
   exit 1
 fi
 
-# 5. 写入纯净无瑕疵的 Xray 配置文件
+# 6. 写入极致纯净的 Xray 配置文件 (剔除私人域名，100% 纯净伪装微软)
 mkdir -p /usr/local/etc/xray
 cat > /usr/local/etc/xray/config.json <<EOF
 {
@@ -77,8 +83,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
           "show": false,
           "dest": "www.microsoft.com:443",
           "serverNames": [
-            "www.microsoft.com",
-            "${DOMAIN}"
+            "www.microsoft.com"
           ],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SID}"]
@@ -99,7 +104,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
 }
 EOF
 
-# 6. 配置并拉起 Systemd 系统服务守护
+# 7. 配置 Systemd 系统服务守护 (使用动态 Xray 路径)
 cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Production Service
@@ -110,7 +115,7 @@ User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+ExecStart=${XRAY_BIN} run -config /usr/local/etc/xray/config.json
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -123,7 +128,7 @@ systemctl daemon-reload
 systemctl enable xray
 systemctl restart xray
 
-# 7. 配置 5 分钟进程探活自愈看门狗
+# 8. 配置 5 分钟进程探活自愈看门狗 (删除定时重启，拒绝机场特征)
 mkdir -p /usr/local/bin
 cat > /usr/local/bin/xray-check.sh <<'EOF'
 #!/usr/bin/env bash
@@ -138,23 +143,22 @@ CRON_EXISTING="$(crontab -l 2>/dev/null | grep -v "xray-check.sh" | grep -v "reb
 TMP_CRON="$(mktemp)"
 printf "%s\n" "$CRON_EXISTING" > "$TMP_CRON"
 echo "*/5 * * * * /usr/local/bin/xray-check.sh >/dev/null 2>&1" >> "$TMP_CRON"
-echo "0 4 * * 1 /sbin/reboot" >> "$TMP_CRON"
 crontab "$TMP_CRON"
 rm -f "$TMP_CRON"
 
-# 8. 拼装客户端输出
-URI="vless://${UUID}@${PUBLIC_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp&sid=${SID}#Reality_Node_${PUBLIC_IP}"
+# 9. 拼装客户端输出
+URI="vless://${UUID}@${PUBLIC_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp&sid=${SID}#Reality_${DOMAIN}"
 
 echo
-echo "==================== 工业级多节点通用版部署成功 ===================="
+echo "==================== 工业级自用终极版部署成功 ===================="
 echo "公网IP: $PUBLIC_IP"
-echo "绑定的域名: $DOMAIN"
+echo "管理标识域名: $DOMAIN"
 echo "------------------------------------------------------------------"
 echo "【📱 Shadowrocket 小火箭专用单行链接】(直接整行复制导入):"
 echo "$URI"
 echo "------------------------------------------------------------------"
 echo "【💻 Clash Verge 专用配置格式】(复制粘贴进 YAML 的 proxies 列表下):"
-echo "  - name: \"Reality_Node_${PUBLIC_IP}\""
+echo "  - name: \"Reality_${DOMAIN}\""
 echo "    type: vless"
 echo "    server: $PUBLIC_IP"
 echo "    port: 443"
